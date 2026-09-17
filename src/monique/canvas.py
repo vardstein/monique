@@ -392,51 +392,118 @@ class MonitorCanvas(Gtk.DrawingArea):
         if sw > 40 and sh > 20:
             self._draw_monitor_text(cr, m, sx, sy, sw, sh)
 
-    def _draw_monitor_text(self, cr, m: MonitorConfig, sx: float, sy: float, sw: float, sh: float) -> None:
-        # Clip text to monitor rectangle
+    def _draw_monitor_text(
+        self,
+        cr,
+        m: MonitorConfig,
+        sx: float,
+        sy: float,
+        sw: float,
+        sh: float,
+    ) -> None:
+        """Draw connector identity, optional description, and resolution."""
         cr.save()
+
         padding = 6
-        cr.rectangle(sx + padding, sy + padding, sw - padding * 2, sh - padding * 2)
+        cr.rectangle(
+            sx + padding,
+            sy + padding,
+            sw - padding * 2,
+            sh - padding * 2,
+        )
         cr.clip()
 
-        # Name — show description when enabled, fall back to port name
-        name = (m.description if self._use_description and m.description else m.name) or "?"
-        font_size = min(14, max(8, sw / 10))
-        cr.set_font_size(font_size)
-
         max_text_w = sw - padding * 2
-        name_lines = self._wrap_text(cr, name, max_text_w, max_lines=4)
-        line_height = font_size * 1.3
 
-        # Resolution line
-        res_text = f"{m.width}x{m.height}"
-        font_size_small = min(10, max(6, sw / 14))
+        # Connector name is the authoritative runtime identity and is
+        # therefore always visible, even when descriptions are enabled.
+        port_name = m.name or "?"
 
-        # Vertical centering: name block + gap + resolution
+        description = ""
+        if (
+            self._use_description
+            and m.description
+            and m.description != port_name
+        ):
+            description = m.description
+
+        primary_font = min(14, max(9, sw / 10))
+        secondary_font = min(9, max(6, sw / 18))
+        resolution_font = min(10, max(6, sw / 14))
+
+        cr.set_font_size(primary_font)
+        port_lines = self._wrap_text(
+            cr,
+            port_name,
+            max_text_w,
+            max_lines=1,
+        )
+
+        cr.set_font_size(secondary_font)
+        description_lines = (
+            self._wrap_text(
+                cr,
+                description,
+                max_text_w,
+                max_lines=2,
+            )
+            if description
+            else []
+        )
+
+        resolution = f"{m.width}x{m.height}"
+
+        primary_line_height = primary_font * 1.3
+        secondary_line_height = secondary_font * 1.25
+
         gap = 4
-        name_block_h = len(name_lines) * line_height
-        total_h = name_block_h + gap + font_size_small
-        base_y = sy + (sh - total_h) / 2 + font_size
 
-        # Draw name lines (centered)
+        total_h = (
+            len(port_lines) * primary_line_height
+            + (gap if description_lines else 0)
+            + len(description_lines) * secondary_line_height
+            + gap
+            + resolution_font
+        )
+
+        y = sy + (sh - total_h) / 2 + primary_font
+
+        # Primary identity: DP-9 / DP-10 / DP-12 / eDP-1
         cr.set_source_rgb(*COLOR_TEXT)
-        cr.set_font_size(font_size)
-        for i, line in enumerate(name_lines):
-            extents = cr.text_extents(line)
-            tx = sx + (sw - extents.width) / 2
-            ty = base_y + i * line_height
-            cr.move_to(tx, ty)
-            cr.show_text(line)
+        cr.set_font_size(primary_font)
 
-        # Resolution (centered, below name)
+        for line in port_lines:
+            extents = cr.text_extents(line)
+            x = sx + (sw - extents.width) / 2
+            cr.move_to(x, y)
+            cr.show_text(line)
+            y += primary_line_height
+
+        # Secondary human-readable EDID description.
+        if description_lines:
+            y += gap
+            cr.set_source_rgb(*COLOR_TEXT_DIM)
+            cr.set_font_size(secondary_font)
+
+            for line in description_lines:
+                extents = cr.text_extents(line)
+                x = sx + (sw - extents.width) / 2
+                cr.move_to(x, y)
+                cr.show_text(line)
+                y += secondary_line_height
+
+        y += gap
+
+        # Resolution.
         cr.set_source_rgb(*COLOR_TEXT_DIM)
-        cr.set_font_size(font_size_small)
-        extents = cr.text_extents(res_text)
-        tx = sx + (sw - extents.width) / 2
-        ty = base_y + len(name_lines) * line_height + gap
-        if ty + padding < sy + sh:
-            cr.move_to(tx, ty)
-            cr.show_text(res_text)
+        cr.set_font_size(resolution_font)
+
+        extents = cr.text_extents(resolution)
+        x = sx + (sw - extents.width) / 2
+
+        if y + padding < sy + sh:
+            cr.move_to(x, y)
+            cr.show_text(resolution)
 
         cr.restore()
 

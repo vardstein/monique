@@ -205,9 +205,12 @@ class HyprlandIPC:
     ) -> None:
         """Write monitor config and reload Hyprland."""
         # Write the legacy hyprlang and/or Lua configs, per user setting.
+        # Hyprland monitor configuration must use connector names.
+        # EDID descriptions are not unique: multiple physical displays may
+        # expose the same description and serial.
         write_hyprland_configs(
             profile, fmt=hypr_config_format,
-            use_description=use_description, use_v2=self.supports_v2,
+            use_description=False, use_v2=self.supports_v2,
             supports_icc=self.supports_icc,
         )
 
@@ -238,13 +241,13 @@ class HyprlandIPC:
         self, profile: Profile, *, use_description: bool = False,
     ) -> None:
         """Apply profile via keyword commands (live, no file write)."""
-        # Build name→identifier mapping
-        name_to_id: dict[str, str] = {}
-        for m in profile.monitors:
-            if use_description and m.description:
-                name_to_id[m.name] = f"desc:{m.description}"
-            else:
-                name_to_id[m.name] = m.name
+        # Connector names are the authoritative runtime identity.
+        # Descriptions are metadata only: multiple physical monitors may
+        # legitimately expose the same EDID description/serial.
+        name_to_id: dict[str, str] = {
+            m.name: m.name
+            for m in profile.monitors
+        }
 
         cmds: list[str] = []
         if self.supports_v2:
