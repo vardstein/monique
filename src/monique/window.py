@@ -31,6 +31,7 @@ from .utils import (
     load_app_settings,
     save_app_settings,
     save_active_profile,
+    sync_noctalia_greeter,
 )
 
 import logging
@@ -1292,6 +1293,11 @@ class MainWindow(Adw.ApplicationWindow):
                 self._profile_mgr.save(profile)
             save_active_profile(self._current_profile_name or None)
             self._toast("Settings kept")
+            if self._app_settings.get("update_greetd", True):
+                try:
+                    sync_noctalia_greeter()
+                except OSError as e:
+                    log.warning("Could not sync the greeter layout: %s", e)
         else:
             self._do_revert()
 

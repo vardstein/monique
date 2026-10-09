@@ -13,6 +13,7 @@ from .models import (
     MonitorConfig, ResolutionMode, PositionMode, ScaleMode,
     Transform, VRR,
 )
+from .scales import clean_scales, nearest_clean_scale
 
 
 def _fix_spin_icons(widget: Gtk.Widget) -> None:
@@ -65,6 +66,11 @@ class PropertiesPanel(Adw.PreferencesPage):
         self._building = False
         self._backend: str = "hyprland"  # "hyprland", "sway", or "niri"
         self._hyprland_icc: bool = False
+        self._scale_choices: list[float] = []
+        self._scale_mode_size: tuple[int, int] = (0, 0)
+        # Scale the user asked for; kept while width and height change one
+        # at a time, so the in-between mode does not move it.
+        self._scale_wanted: float = 1.0
         self._hdr_dependent_rows: list[Gtk.Widget] = []
 
         self._build_ui()
@@ -164,12 +170,12 @@ class PropertiesPanel(Adw.PreferencesPage):
         self._combo_scale_mode.connect("notify::selected", self._on_scale_mode_changed)
         grp_scale.add(self._combo_scale_mode)
 
-        self._spin_scale = Adw.SpinRow.new_with_range(0.1, 10.0, 0.05)
-        self._spin_scale.set_title("Scale")
-        self._spin_scale.set_digits(2)
-        self._spin_scale.connect("notify::value", self._on_changed)
-        grp_scale.add(self._spin_scale)
-        _fix_spin_icons(self._spin_scale)
+        # Only scales that divide the mode into whole logical pixels; any
+        # other value makes Hyprland warn and pick its own on every load.
+        self._combo_scale = Adw.ComboRow(title="Scale")
+        self._combo_scale.set_subtitle("Steps that fit this resolution")
+        self._combo_scale.connect("notify::selected", self._on_changed)
+        grp_scale.add(self._combo_scale)
 
         self._combo_transform = Adw.ComboRow(title="Transform", icon_name="object-rotate-right-symbolic")
         transforms = Gtk.StringList.new([t.label for t in Transform])
@@ -470,8 +476,9 @@ class PropertiesPanel(Adw.PreferencesPage):
         # Scale
         idx = self._find_combo_index(self._combo_scale_mode, monitor.scale_mode.value)
         self._combo_scale_mode.set_selected(idx)
-        self._spin_scale.set_value(monitor.scale)
-        self._spin_scale.set_visible(monitor.scale_mode == ScaleMode.EXPLICIT)
+        self._scale_wanted = monitor.scale
+        self._refresh_scale_choices(monitor.width, monitor.height, monitor.scale)
+        self._combo_scale.set_visible(monitor.scale_mode == ScaleMode.EXPLICIT)
 
         # Transform
         self._combo_transform.set_selected(monitor.transform.value)
@@ -549,7 +556,9 @@ class PropertiesPanel(Adw.PreferencesPage):
         # Scale
         m.scale_mode = self._combo_enum_value(self._combo_scale_mode, ScaleMode, ScaleMode.EXPLICIT)
         if m.scale_mode == ScaleMode.EXPLICIT:
-            m.scale = round(self._spin_scale.get_value(), 2)
+            sel = self._combo_scale.get_selected()
+            if sel < len(self._scale_choices):
+                m.scale = self._scale_choices[sel]
 
         # Transform
         m.transform = Transform(self._combo_transform.get_selected())
@@ -609,7 +618,14 @@ class PropertiesPanel(Adw.PreferencesPage):
         if self._building or self._monitor is None:
             return
         self._sync_icc_ui()
+        size = (int(self._spin_width.get_value()), int(self._spin_height.get_value()))
+        size_changed = size != self._scale_mode_size
+        if size_changed:
+            # The old scale may not fit the new mode: move to the nearest one.
+            self._refresh_scale_choices(*size, self._scale_wanted)
         self._apply_to_monitor()
+        if not size_changed:
+            self._scale_wanted = self._monitor.scale
         self._hdr_dependent_settings_hints()
         self.emit("property-changed")
 
@@ -688,8 +704,27 @@ class PropertiesPanel(Adw.PreferencesPage):
         if self._building:
             return
         mode = self._combo_enum_value(self._combo_scale_mode, ScaleMode, ScaleMode.EXPLICIT)
-        self._spin_scale.set_visible(mode == ScaleMode.EXPLICIT)
+        self._combo_scale.set_visible(mode == ScaleMode.EXPLICIT)
         self._on_changed()
+
+    def _refresh_scale_choices(self, width: int, height: int, current: float) -> None:
+        """List the clean scales for ``width``x``height`` and select the
+        one nearest to ``current``."""
+        choices = clean_scales(width, height)
+        nearest = nearest_clean_scale(width, height, current)
+        if nearest not in choices:
+            choices = sorted([*choices, nearest])
+        labels = [
+            f"{s:.4g}  ({round(width / s)} \u00d7 {round(height / s)})"
+            for s in choices
+        ]
+        was_building = self._building
+        self._building = True
+        self._scale_choices = choices
+        self._scale_mode_size = (width, height)
+        self._combo_scale.set_model(Gtk.StringList.new(labels))
+        self._combo_scale.set_selected(choices.index(nearest))
+        self._building = was_building
 
     def _on_pick_icc_clicked(self, *args) -> None:
         filter_icc = Gtk.FileFilter()

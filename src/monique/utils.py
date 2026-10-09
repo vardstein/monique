@@ -191,6 +191,26 @@ def write_greetd_monitors(content: str) -> None:
     )
 
 
+def sync_noctalia_greeter() -> bool:
+    """Ask a running Noctalia shell to copy the output layout to its greeter.
+
+    Noctalia syncs the greeter on wallpaper, theme and font changes only, so
+    a new scale or layout would never reach the login screen. The shell reads
+    the live outputs, so call this after the compositor shows the new layout.
+    Returns False when Noctalia is not installed.
+    """
+    noctalia = shutil.which("noctalia")
+    if noctalia is None:
+        return False
+    subprocess.Popen(
+        [noctalia, "msg", "greeter-sync"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    return True
+
+
 def _settings_path() -> Path:
     """Return the path to the global app settings file."""
     return config_dir() / "settings.json"
