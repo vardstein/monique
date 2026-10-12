@@ -7,6 +7,8 @@ from dataclasses import dataclass, field, asdict
 from enum import Enum
 from typing import ClassVar
 
+from .modes import nearest_mode_index, parse_mode
+
 
 # ── Enums ────────────────────────────────────────────────────────────────
 
@@ -719,7 +721,22 @@ class MonitorConfig:
         d["scale_mode"] = ScaleMode(d.get("scale_mode", "explicit"))
         d["transform"] = Transform(d.get("transform", 0))
         d["vrr"] = VRR(d.get("vrr", 0))
-        return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
+        monitor = cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
+        monitor.snap_to_available_mode()
+        return monitor
+
+    def snap_to_available_mode(self) -> None:
+        """Move an explicit mode the monitor doesn't list to the nearest
+        listed one, so a saved profile can't write a mode the compositor
+        rejects."""
+        if self.resolution_mode != ResolutionMode.EXPLICIT:
+            return
+        index = nearest_mode_index(
+            self.available_modes, self.width, self.height, self.refresh_rate,
+        )
+        if index is None:
+            return
+        self.width, self.height, self.refresh_rate = parse_mode(self.available_modes[index])
 
     @classmethod
     def from_hyprctl(cls, data: dict) -> MonitorConfig:

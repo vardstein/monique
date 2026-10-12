@@ -13,6 +13,7 @@ from .models import (
     MonitorConfig, ResolutionMode, PositionMode, ScaleMode,
     Transform, VRR,
 )
+from .modes import nearest_mode_index
 from .scales import clean_scales, nearest_clean_scale
 
 
@@ -71,6 +72,8 @@ class PropertiesPanel(Adw.PreferencesPage):
         # Scale the user asked for; kept while width and height change one
         # at a time, so the in-between mode does not move it.
         self._scale_wanted: float = 1.0
+        # True when the monitor lists its modes; then only those are offered.
+        self._modes_known = False
         self._hdr_dependent_rows: list[Gtk.Widget] = []
 
         self._build_ui()
@@ -441,27 +444,26 @@ class PropertiesPanel(Adw.PreferencesPage):
         idx = self._find_combo_index(self._combo_res_mode, monitor.resolution_mode.value)
         self._combo_res_mode.set_selected(idx)
 
-        # Available modes dropdown
-        if monitor.available_modes:
-            self._combo_resolution.set_model(Gtk.StringList.new(monitor.available_modes))
-            # Find closest match
-            for i, mode in enumerate(monitor.available_modes):
-                if mode.startswith(f"{monitor.width}x{monitor.height}"):
-                    self._combo_resolution.set_selected(i)
-                    break
-        else:
-            self._combo_resolution.set_model(Gtk.StringList.new([]))
+        # Available modes dropdown. When the monitor lists its modes, only
+        # those can be picked: a mode outside the list makes the compositor
+        # fall back and warn, so the width, height and refresh fields stay
+        # hidden and the monitor moves to the nearest listed mode.
+        self._combo_resolution.set_model(Gtk.StringList.new(monitor.available_modes))
+        self._modes_known = False
+        index = nearest_mode_index(
+            monitor.available_modes, monitor.width, monitor.height, monitor.refresh_rate,
+        )
+        if index is not None:
+            self._modes_known = True
+            self._combo_resolution.set_selected(index)
+            self._parse_mode_string(monitor, monitor.available_modes[index])
 
         self._spin_width.set_value(monitor.width)
         self._spin_height.set_value(monitor.height)
         self._spin_refresh.set_value(monitor.refresh_rate)
 
         # Show/hide manual fields based on mode
-        is_explicit = monitor.resolution_mode == ResolutionMode.EXPLICIT
-        self._combo_resolution.set_visible(is_explicit)
-        self._spin_width.set_visible(is_explicit)
-        self._spin_height.set_visible(is_explicit)
-        self._spin_refresh.set_visible(is_explicit)
+        self._show_resolution_rows(monitor.resolution_mode == ResolutionMode.EXPLICIT)
 
         # Position mode
         idx = self._find_combo_index(self._combo_pos_mode, monitor.position_mode.value)
@@ -669,12 +671,17 @@ class PropertiesPanel(Adw.PreferencesPage):
         if self._building:
             return
         mode = self._combo_enum_value(self._combo_res_mode, ResolutionMode, ResolutionMode.EXPLICIT)
-        is_explicit = mode == ResolutionMode.EXPLICIT
-        self._combo_resolution.set_visible(is_explicit)
-        self._spin_width.set_visible(is_explicit)
-        self._spin_height.set_visible(is_explicit)
-        self._spin_refresh.set_visible(is_explicit)
+        self._show_resolution_rows(mode == ResolutionMode.EXPLICIT)
         self._on_changed()
+
+    def _show_resolution_rows(self, is_explicit: bool) -> None:
+        """Offer the mode list when the monitor has one, free fields only
+        when it doesn't."""
+        manual = is_explicit and not self._modes_known
+        self._combo_resolution.set_visible(is_explicit and self._modes_known)
+        self._spin_width.set_visible(manual)
+        self._spin_height.set_visible(manual)
+        self._spin_refresh.set_visible(manual)
 
     def _on_resolution_changed(self, *args) -> None:
         if self._building or self._monitor is None:
