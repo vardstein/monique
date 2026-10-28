@@ -15,7 +15,7 @@ from .config_paths import (
     sway_monitors_path,
 )
 from .hypr_config import write_hyprland_configs
-from .models import MonitorConfig, Profile, WorkspaceRule
+from .models import MonitorConfig, Profile, WorkspaceRule, _lua_string
 from .utils import (
     hyprland_runtime_dir,
     is_sway_installed,
@@ -37,6 +37,7 @@ class HyprlandIPC:
         self._version: tuple[int, int, int] | None = None
         self._supports_v2: bool | None = None
         self._supports_icc: bool | None = None
+        self._uses_lua: bool | None = None
 
     def get_version(self) -> tuple[int, int, int]:
         """Return the Hyprland version as (major, minor, patch).
@@ -74,6 +75,25 @@ class HyprlandIPC:
         if self._supports_icc is None:
             self._supports_icc = self.get_version() >= (0, 55, 0)
         return self._supports_icc
+
+    @property
+    def uses_lua(self) -> bool:
+        """True if the running Hyprland reads a Lua config.
+
+        A Lua config takes ``eval`` and turns ``dispatch`` into
+        ``hl.dispatch(...)``; a hyprlang config or an older Hyprland answers
+        ``eval`` with an error text instead of ``ok``.
+        """
+        if self._uses_lua is None:
+            try:
+                self._uses_lua = self.command("eval do end").strip() == "ok"
+            except OSError:
+                self._uses_lua = False
+        return self._uses_lua
+
+    def eval(self, code: str) -> str:
+        """Run Lua in the running Hyprland; the reply is ``ok`` on success."""
+        return self.command(f"eval {code}")
 
     @property
     def command_socket(self) -> Path:
@@ -132,6 +152,12 @@ class HyprlandIPC:
 
     def move_workspace_to_monitor(self, workspace: str, monitor: str) -> str:
         """Move a workspace to a different monitor."""
+        if self.uses_lua:
+            return self.command(
+                "dispatch hl.dsp.workspace.move({ "
+                f"workspace = {_lua_string(workspace)}, "
+                f"monitor = {_lua_string(monitor)} }})"
+            )
         return self.command(f"dispatch moveworkspacetomonitor {workspace} {monitor}")
 
     def get_workspace_rules(self, monitors: list[MonitorConfig] | None = None) -> list[WorkspaceRule]:

@@ -147,8 +147,22 @@ class MonitorOSD(Gtk.Window):
             return
         try:
             from .hyprland import HyprlandIPC
+            from .models import _lua_string
             t = OSD_WINDOW_TITLE
-            HyprlandIPC().batch([
+            ipc = HyprlandIPC()
+            if ipc.uses_lua:
+                # A rule added at runtime lasts until the next reload.
+                reply = ipc.eval(
+                    "hl.window_rule({ "
+                    f"match = {{ title = {_lua_string(f'^{t}$')} }}, "
+                    "no_anim = true, no_focus = true, no_shadow = true, "
+                    "border_size = 0 })"
+                ).strip()
+                if reply != "ok":
+                    raise RuntimeError(reply)
+                MonitorOSD._rules_set = True
+                return
+            ipc.batch([
                 f"keyword windowrulev2 noanim, title:^{t}$",
                 f"keyword windowrulev2 nofocus, title:^{t}$",
                 f"keyword windowrulev2 noshadow, title:^{t}$",
